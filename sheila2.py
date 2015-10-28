@@ -6,13 +6,13 @@ import sqlite3
 import logging
 import pickle
 import json
+import os
 
 from cst import CodeTable
 from util import make_table_name
 from util import subset
 from util import disjoin
 
-CREATE_TABLE_SQL_STRING = "CREATE TABLE %s ( id INT UNSIGNED PRIMARY KEY AUTO_INCREMENT, data TEXT NOT NULL )"
 
 class Sheila:
     _instance = None
@@ -34,16 +34,17 @@ class Sheila:
     def execute_sql_stmt(self, stmt):
         cursor = self.conn.cursor()
         try:
-    		self.logger.debug("Creating new " + name)
     		cursor.execute(stmt)
     		self.conn.commit()
     	except Exception as e:
-    		self.logger.critical(e)
-    		self.conn.rollback()
+            self.logger.critical(e)
+            self.logger.critical(stmt)
+            self.conn.rollback()
 
-    def createTable(self, name, keys):
+    def create_table(self, name, keys):
         cst = self.cst
-    	self.execute_sql_stmt(CREATE_TABLE_SQL_STRING % name)
+        stmt = 'CREATE TABLE {t} ( data text )'.format(t=name)
+    	self.execute_sql_stmt(stmt)
     	cst[name] = keys
     	pickle.dump(cst, open(self.cst_file,'w'))
 
@@ -53,40 +54,45 @@ class Sheila:
         cst[old] = new
     	pickle.dump(cst, open(self.cst_file, 'w'))
 
+    def query_match(self, f, d1, d2):
+    	"""Develop for more complex queries."""
+    	if f == 'equal':
+    		return d1 == d2
+
     def sql_insert(self, data, table):
-    	# Actual data insertion
-        self.execute_sql_stmt(("INSERT INTO "+table+"(data) VALUES (%s)",(str(data))))
+        data_as_string = "'" + json.dumps(data) + "'"
+        stmt = "INSERT INTO {t} VALUES ({v})".format(t=table, v=data_as_string)
+        self.execute_sql_stmt(stmt)
 
     def sql_select(self, data, table):
     	f = 'equal'
      	c = self.conn.cursor()
      	# current duplicate-free policy on queries
-     	self.logger.debug("MySQL select on "+table)
+     	self.logger.info("MySQL select on "+table)
+        stmt = 'SELECT data FROM {t}'.format(t=table)
      	try:
-    		c.execute("SELECT DISTINCT data FROM "+table)
+    		c.execute(stmt)
     	except:
     		self.logger.critical("Select on "+table)
-    	numrows = c.rowcount
     	r = []
-    	for x in xrange(0,numrows):
-      		row = c.fetchone()
-      		j = json.loads(row[0])
-      		if len(j) < len(data):
-      			continue
-      		add = False
-      		for d in data.keys():
-      			try:
-      				if queryMatch(f,data[d],j[d]):
-      					add = True
-      			except KeyError:
-      				continue
-      		if add:
-      			r.append(j)
-      	self.logger.debug("Returned "+str(len(r))+" results from "+table)
-      	return r
+    	for row in c.fetchall():
+            j = json.loads(row[0])
+            if len(j) < len(data):
+                continue
+            add = False
+            for d in data.keys():
+                try:
+                    if self.query_match(f, data[d], j[d]):
+                        add = True
+                except KeyError:
+                    continue
+            if add:
+        		r.append(j)
+        self.logger.debug("Returned "+str(len(r))+" results from "+table)
+        return r
 
     def destroy(self):
-        self.execute_sql_stmt(("DROP DATABASE %s", (self.dbname)))
+        os.remove(self.dbname)
 
     def insert(self, data):
         new = data.keys()
@@ -100,7 +106,7 @@ class Sheila:
             	tTag = cst.get_set_with_most_common_tags(new)
                 tKeys = cst[tTag]
                 target = tTag
-                self.sql_insert(json.dumps(data), target)
+                self.sql_insert(data, target)
                 break
             elif not disjoin(new, cst[key]):
                 tTag = cst.get_set_with_most_common_tags(new)
@@ -111,9 +117,23 @@ class Sheila:
                 new = list(set(new) | set(tKeys))
                 target=tTag
                 self.updateTable(target, new)
-                self.sql_insert(json.dumps(data), tTag)
+                self.sql_insert(data, tTag)
                 break
         if operation == 'Create':
             target = make_table_name(new)
-            self.createTable(target, new)
-            self.sql_insert(json.dumps(data), target)
+            self.create_table(target, new)
+            self.sql_insert(data, target)
+
+    def query(self, data):
+        keys = data.keys()
+        cst = self.cst
+    	tKeys = cst.get_common_sets(keys)
+    	if tKeys == []:
+    		logger.debug("\nNo table for data: " + data)
+    		return []
+    	ret = []
+    	for tTag in tKeys:
+    		partial = self.sql_select(data, tTag)
+    		for p in partial:
+    			ret.append(p)
+    	return ret

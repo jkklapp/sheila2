@@ -17,7 +17,6 @@ class CodeTable:
 			self.table = pickle.load(open(cstfile, 'r'))
 			logging.info("Existing CST loaded.")
 		except IOError:
-			logging.warning("Loading empty CST!")
 			self.table = {}
 
 	def __call__(self):
@@ -26,7 +25,7 @@ class CodeTable:
 	def __str__(self):
 		r = "CST state\n"
 		for key in self.tables():
-			r += "key: " + key + " content: " + self.table[key] + "\n"
+			r += "key: " + key + " content: " + str(self.table[key]) + "\n"
 		r += "----------------------------------------"
 		return r
 
@@ -41,6 +40,14 @@ class CodeTable:
 
 	def tables(self):
 		return self.table.keys()
+
+	def get_common_sets(self, s):
+		"""Returns a list of tables that are targets."""
+		tTags=[]
+		for key in self.tables():
+			if set(s).issubset(self.get_keys_as_set(key)):
+				tTags.append(key)
+		return tTags
 
 	def get_set_with_most_common_tags(self, target_keys):
 		"""Gets the table where the object should be inserted."""
